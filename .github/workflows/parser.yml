@@ -1,0 +1,24 @@
+name: Парсер цен Суточно
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Забрать код
+        uses: actions/checkout@v4
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+      - name: Установить браузер Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Запустить парсер цен
+        run: python update_sheet.py
