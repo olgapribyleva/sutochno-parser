@@ -34,8 +34,8 @@ EXTRA_URLS = [
 def short(occ_result):
     """Короткая сводка результата занятости для лога."""
     occ = occ_result.get("occupancy", [])
-    # все НЕ-свободные дни с их меткой — для сверки с RC
-    marked = [x["date"] + ":" + x["status"] for x in occ if x.get("status") != "free"]
+    # конкретные ЗАНЯТЫЕ дни (восстановленная занятость) — сверяем с RC
+    busy_days = [x["date"] for x in occ if x.get("status") == "busy"]
     return {
         "ok": occ_result.get("ok"),
         "days_total": occ_result.get("days_total"),
@@ -46,8 +46,9 @@ def short(occ_result):
             (occ[0]["date"] if occ else None),
             (occ[-1]["date"] if occ else None),
         ],
-        # ГЛАВНОЕ: конкретные занятые/помеченные дни (сверяем с RC)
-        "marked_days": marked[:60],
+        "busy_days": busy_days[:60],
+        # явные метки границ (для диагностики)
+        "markers": occ_result.get("markers", [])[:40],
     }
 
 

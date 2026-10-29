@@ -1456,7 +1456,26 @@ def read_calendar_occupancy(url, months=3):
             except Exception:
                 pass
 
-    occupancy = [{"date": k, "status": v} for k, v in sorted(occ.items())]
+    # ВОССТАНОВЛЕНИЕ ЗАНЯТОСТИ ПО ГРАНИЦАМ (подтверждено сверкой с RC на Фокина 31):
+    #  - свободная ночь = день 'free' ИЛИ 'res_first' (день выезда — ночь уже свободна);
+    #  - занятая ночь  = 'res_last' (день заезда — ночь занята), 'res_mid'/'blocked',
+    #    А ТАКЖЕ дни, которых НЕТ среди доступных (глухую середину брони Суточно прячет).
+    avail_dates = [
+        date.fromisoformat(k) for k, v in occ.items()
+        if v in ("free", "res_first", "res_last")
+    ]
+    end_d = max(avail_dates) if avail_dates else today
+
+    markers = []  # диагностика: дни с явной меткой (res_first/res_last/blocked)
+    occupancy = []
+    d = today
+    while d <= end_d:
+        cat = occ.get(d.isoformat())
+        if cat and cat != "free":
+            markers.append(d.isoformat() + ":" + cat)
+        is_free = cat in ("free", "res_first")
+        occupancy.append({"date": d.isoformat(), "status": "free" if is_free else "busy"})
+        d += timedelta(days=1)
 
     free_count = sum(1 for x in occupancy if x["status"] == "free")
     busy_count = len(occupancy) - free_count
@@ -1470,6 +1489,7 @@ def read_calendar_occupancy(url, months=3):
         "free": free_count,
         "busy": busy_count,
         "occupancy": occupancy,
+        "markers": markers,
         "class_hist": class_hist,
         "raw_sample": raw_sample,
         "error": error
