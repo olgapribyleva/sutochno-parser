@@ -1219,6 +1219,232 @@ def calculate_price_by_calendar(url, offset, guests, nights):
         }
 
 
+# ==========================================================================
+# АПГРЕЙД (занятость по дням) — читаем календарь ОДНИМ визитом на объект.
+# Не трогает расчёт цен выше. Основа сравнительной таблицы «ты vs конкуренты».
+# ==========================================================================
+
+# Русские названия месяцев (полные и короткие) -> номер месяца.
+RU_MONTHS = {
+    "январь": 1, "янв": 1, "января": 1,
+    "февраль": 2, "фев": 2, "февраля": 2,
+    "март": 3, "мар": 3, "марта": 3,
+    "апрель": 4, "апр": 4, "апреля": 4,
+    "май": 5, "мая": 5,
+    "июнь": 6, "июн": 6, "июня": 6,
+    "июль": 7, "июл": 7, "июля": 7,
+    "август": 8, "авг": 8, "августа": 8,
+    "сентябрь": 9, "сен": 9, "сент": 9, "сентября": 9,
+    "октябрь": 10, "окт": 10, "октября": 10,
+    "ноябрь": 11, "ноя": 11, "нояб": 11, "ноября": 11,
+    "декабрь": 12, "дек": 12, "декабря": 12,
+}
+
+
+def parse_month_caption(caption):
+    """Из подписи календаря ('Ноябрь 2026' / 'ноя 2026') -> (год, месяц)."""
+    if not caption:
+        return None
+
+    low = caption.strip().lower()
+
+    year_match = re.search(r"(20\d{2})", low)
+    year = int(year_match.group(1)) if year_match else None
+
+    month = None
+    for name, num in RU_MONTHS.items():
+        if re.search(r"\b" + re.escape(name), low):
+            month = num
+            break
+
+    if month is None:
+        return None
+
+    return (year, month)
+
+
+# JS, который снимает все видимые ячейки-дни календаря bootstrap-daterangepicker.
+# Возвращает по каждой ячейке: подпись месяца, число, список классов.
+CALENDAR_SNAPSHOT_JS = r"""
+() => {
+  const out = [];
+  const tables = document.querySelectorAll(
+    ".daterangepicker table.table-condensed, .daterangepicker table, table.table-condensed"
+  );
+  tables.forEach((tb) => {
+    let cap = "";
+    const th = tb.querySelector("th.month");
+    if (th) cap = th.textContent.trim();
+    tb.querySelectorAll("td").forEach((td) => {
+      const t = (td.textContent || "").trim();
+      if (!/^\d{1,2}$/.test(t)) return;
+      out.push({
+        cap: cap,
+        day: parseInt(t, 10),
+        cls: td.className || "",
+        dataDate: td.getAttribute("data-date") || td.getAttribute("data-day") || ""
+      });
+    });
+  });
+  return out;
+}
+"""
+
+
+def classify_cell(cls):
+    """По классам ячейки: 'off' (чужой месяц), 'free', 'busy'."""
+    c = " " + (cls or "") + " "
+    if " off " in c:
+        return "off"
+    if " available " in c and " disabled " not in c:
+        return "free"
+    # в будущем без available (и не off) = занято/заблокировано
+    return "busy"
+
+
+def read_calendar_occupancy(url, months=3):
+    """
+    Открывает календарь объекта и считывает занятость по дням на ближайшие
+    `months` месячных экрана. Один визит в браузер (без перебора дат).
+    Возвращает {"ok", "occupancy": [{"date","status"}...], "raw_sample", "error"}.
+    status: 'free' (свободно к брони) / 'busy' (занято или закрыто).
+    """
+    today = date.today()
+    occ = {}            # date -> status (free/busy), берём первое не-off значение
+    raw_sample = []
+    error = ""
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
+        )
+        context = browser.new_context(
+            viewport={"width": 1366, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        )
+        page = context.new_page()
+
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(8000)
+
+            try:
+                page.locator("#modal-cookies-accept").click(timeout=2000)
+                page.wait_for_timeout(800)
+            except Exception:
+                pass
+
+            try:
+                page.locator(".js-booking-calendar-field").first.click(timeout=10000)
+                page.wait_for_timeout(3000)
+            except Exception as e:
+                browser.close()
+                return {
+                    "ok": False,
+                    "occupancy": [],
+                    "raw_sample": [],
+                    "error": "Календарь не открылся: " + repr(e)
+                }
+
+            for step in range(max(1, int(months))):
+                try:
+                    cells = page.evaluate(CALENDAR_SNAPSHOT_JS)
+                except Exception as e:
+                    cells = []
+                    error = "evaluate: " + repr(e)
+
+                # первые ячейки сохраняем «как есть» для диагностики структуры
+                if len(raw_sample) < 20:
+                    for c in cells[:20]:
+                        raw_sample.append({
+                            "cap": c.get("cap", ""),
+                            "day": c.get("day"),
+                            "cls": c.get("cls", "")
+                        })
+
+                for c in cells:
+                    status = classify_cell(c.get("cls", ""))
+                    if status == "off":
+                        continue
+
+                    ym = parse_month_caption(c.get("cap", ""))
+                    if not ym or not ym[0] or not ym[1]:
+                        continue
+
+                    try:
+                        d = date(ym[0], ym[1], int(c.get("day")))
+                    except Exception:
+                        continue
+
+                    if d < today:
+                        continue
+
+                    iso = d.isoformat()
+                    # free имеет приоритет не нужен — просто фиксируем первое значение
+                    if iso not in occ:
+                        occ[iso] = status
+
+                # переход к следующему экрану месяцев
+                clicked = False
+                for sel in [".daterangepicker th.next", "th.next.available", "th.next", ".daterangepicker .next"]:
+                    try:
+                        loc = page.locator(sel).first
+                        loc.click(timeout=2000)
+                        page.wait_for_timeout(1200)
+                        clicked = True
+                        break
+                    except Exception:
+                        pass
+                if not clicked:
+                    break
+
+        except Exception as e:
+            error = (error + " | " if error else "") + repr(e)
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+    occupancy = [{"date": k, "status": v} for k, v in sorted(occ.items())]
+
+    free_count = sum(1 for x in occupancy if x["status"] == "free")
+    busy_count = sum(1 for x in occupancy if x["status"] == "busy")
+
+    return {
+        "ok": len(occupancy) > 0,
+        "days_total": len(occupancy),
+        "free": free_count,
+        "busy": busy_count,
+        "occupancy": occupancy,
+        "raw_sample": raw_sample,
+        "error": error
+    }
+
+
+@app.post("/parse-occupancy")
+def parse_occupancy(request: ParseRequest):
+    """Тестовый endpoint: занятость по дням для одного объекта."""
+    try:
+        return read_calendar_occupancy(request.url, months=3)
+    except Exception as e:
+        return {
+            "ok": False,
+            "occupancy": [],
+            "raw_sample": [],
+            "error": repr(e)
+        }
+
+
 @app.post("/parse-sutochno")
 def parse_sutochno(request: ParseRequest):
     nights = max(int(request.nights or 2), 2)
