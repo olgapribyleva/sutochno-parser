@@ -1344,33 +1344,38 @@ def read_calendar_occupancy(url, months=3):
             except Exception:
                 pass
 
-            try:
-                page.locator(".js-booking-calendar-field").first.click(timeout=10000)
-                page.wait_for_timeout(3000)
-            except Exception as e:
+            # Открываем календарь: до 3 попыток — скролл к виджету, клик, ждём ячейки.
+            opened = False
+            for attempt in range(3):
+                try:
+                    field = page.locator(".js-booking-calendar-field").first
+                    try:
+                        field.scroll_into_view_if_needed(timeout=4000)
+                    except Exception:
+                        pass
+                    field.wait_for(state="visible", timeout=10000)
+                    field.click(timeout=8000)
+                    page.wait_for_timeout(2500)
+                    page.wait_for_selector(
+                        ".daterangepicker td, table.table-condensed td",
+                        timeout=9000
+                    )
+                    opened = True
+                    error = ""
+                    break
+                except Exception as e:
+                    error = "Открытие календаря (попытка %d/3): %s" % (attempt + 1, repr(e))
+                    page.wait_for_timeout(3500)
+
+            if not opened:
                 browser.close()
                 return {
                     "ok": False,
                     "occupancy": [],
+                    "class_hist": [],
                     "raw_sample": [],
-                    "error": "Календарь не открылся: " + repr(e)
+                    "error": error or "Календарь не открылся"
                 }
-
-            # ждём, пока появятся ячейки календаря; если не появились — ещё клик и ждём
-            try:
-                page.wait_for_selector(
-                    ".daterangepicker td, table.table-condensed td",
-                    timeout=8000
-                )
-            except Exception:
-                try:
-                    page.locator(".js-booking-calendar-field").first.click(timeout=5000)
-                    page.wait_for_selector(
-                        ".daterangepicker td, table.table-condensed td",
-                        timeout=8000
-                    )
-                except Exception as e2:
-                    error = "Ячейки календаря не появились: " + repr(e2)
 
             for step in range(max(1, int(months))):
                 try:
