@@ -1715,23 +1715,25 @@ def search_listings(search_url, scrolls=14):
         )
         page = context.new_page()
 
-        # перехват сетевых ответов — ищем запрос, который возвращает результаты
+        # перехват ТОЛЬКО XHR/fetch — именно так SPA грузит данные результатов.
         captured = []
+        failed = []
 
         def on_response(resp):
             try:
-                url = resp.url
-                low = url.lower()
-                keys = ["search", "offer", "object", "result", "list", "map",
-                        "bbox", "apart", "detail", "catalog", "serp", "api"]
-                if not any(k in low for k in keys):
+                rt = ""
+                try:
+                    rt = resp.request.resource_type
+                except Exception:
+                    pass
+                if rt not in ("xhr", "fetch"):
                     return
                 ct = ""
                 try:
                     ct = (resp.headers or {}).get("content-type", "")
                 except Exception:
                     pass
-                rec = {"url": url[:180], "status": resp.status, "ct": ct[:40]}
+                rec = {"url": resp.url[:180], "status": resp.status, "ct": ct[:40]}
                 if "json" in ct.lower() and resp.status == 200:
                     try:
                         body = resp.text()
@@ -1739,14 +1741,22 @@ def search_listings(search_url, scrolls=14):
                         ids = re.findall(r'"id"\s*:\s*"?(\d{6,8})', body)
                         rec["id_hits"] = len(ids)
                         rec["ids_sample"] = list(dict.fromkeys(ids))[:40]
-                        rec["head"] = body[:200]
+                        rec["head"] = body[:160]
                     except Exception as e:
                         rec["read_err"] = repr(e)[:80]
                 captured.append(rec)
             except Exception:
                 pass
 
+        def on_failed(req):
+            try:
+                if req.resource_type in ("xhr", "fetch"):
+                    failed.append({"url": req.url[:160], "rt": req.resource_type})
+            except Exception:
+                pass
+
         page.on("response", on_response)
+        page.on("requestfailed", on_failed)
 
         try:
             page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
@@ -1786,8 +1796,9 @@ def search_listings(search_url, scrolls=14):
                 diag = page.evaluate(DIAG_JS)
             except Exception as e:
                 diag = {"diag_error": repr(e)}
-            # добавим перехваченные сетевые ответы (что вернул поиск/API)
-            diag["responses"] = captured[:50]
+            # добавим перехваченные XHR/fetch (данные) и неудавшиеся запросы
+            diag["xhr"] = captured[:60]
+            diag["xhr_failed"] = failed[:30]
         except Exception as e:
             error = repr(e)
         finally:
