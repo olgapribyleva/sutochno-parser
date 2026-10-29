@@ -1359,17 +1359,43 @@ def read_calendar_occupancy(url, months=3):
             except Exception:
                 pass
 
-            # Открываем календарь: до 3 попыток — скролл к виджету, клик, ждём ячейки.
+            # Открываем календарь: до 4 попыток. На каждой неудаче — ПЕРЕЗАГРУЗКА
+            # страницы (частый фикс недорисованного виджета) + перебор нескольких
+            # триггеров + прокрутка (ленивая подгрузка блока календаря).
             opened = False
-            for attempt in range(3):
+            triggers = [
+                ".js-booking-calendar-field",
+                ".js-booking-calendar-field input",
+                ".js-booking-calendar-field .b-datepicker__field",
+                "input.js-booking-calendar-field",
+                "[data-popup='calendar']",
+            ]
+            for attempt in range(4):
                 try:
-                    field = page.locator(".js-booking-calendar-field").first
+                    # прокрутить вниз — подтолкнуть ленивую загрузку виджета
                     try:
-                        field.scroll_into_view_if_needed(timeout=4000)
+                        page.mouse.wheel(0, 1200)
+                        page.wait_for_timeout(600)
                     except Exception:
                         pass
-                    field.wait_for(state="visible", timeout=10000)
-                    field.click(timeout=8000)
+
+                    clicked_trigger = False
+                    for tsel in triggers:
+                        try:
+                            field = page.locator(tsel).first
+                            try:
+                                field.scroll_into_view_if_needed(timeout=3000)
+                            except Exception:
+                                pass
+                            field.wait_for(state="visible", timeout=6000)
+                            field.click(timeout=6000)
+                            clicked_trigger = True
+                            break
+                        except Exception:
+                            continue
+                    if not clicked_trigger:
+                        raise RuntimeError("ни один триггер календаря не сработал")
+
                     page.wait_for_timeout(2500)
                     page.wait_for_selector(
                         ".daterangepicker td, table.table-condensed td",
@@ -1379,8 +1405,17 @@ def read_calendar_occupancy(url, months=3):
                     error = ""
                     break
                 except Exception as e:
-                    error = "Открытие календаря (попытка %d/3): %s" % (attempt + 1, repr(e))
-                    page.wait_for_timeout(3500)
+                    error = "Открытие календаря (попытка %d/4): %s" % (attempt + 1, repr(e))
+                    # перезагрузка страницы перед следующей попыткой
+                    try:
+                        page.reload(wait_until="domcontentloaded", timeout=45000)
+                        page.wait_for_timeout(6000)
+                        try:
+                            page.locator("#modal-cookies-accept").click(timeout=1500)
+                        except Exception:
+                            pass
+                    except Exception:
+                        page.wait_for_timeout(3500)
 
             if not opened:
                 browser.close()
