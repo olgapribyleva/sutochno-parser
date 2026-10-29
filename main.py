@@ -1661,9 +1661,40 @@ SEARCH_LINKS_JS = r"""
 """
 
 
+DIAG_JS = r"""
+() => {
+  const anchors = Array.prototype.slice.call(document.querySelectorAll('a[href]'));
+  const hrefs = anchors.map(function (a) { return a.href; });
+  const sample = [];
+  const seen = {};
+  for (let i = 0; i < hrefs.length; i++) {
+    const h = hrefs[i];
+    if (!seen[h]) { seen[h] = 1; sample.push(h); }
+    if (sample.length >= 50) break;
+  }
+  function cnt(sel) { try { return document.querySelectorAll(sel).length; } catch (e) { return -1; } }
+  return {
+    title: document.title,
+    url: location.href,
+    bodyLen: ((document.body && document.body.innerText) || "").length,
+    anchors: anchors.length,
+    withDetail: hrefs.filter(function (h) { return /detail\/\d+/.test(h); }).length,
+    withDigits: hrefs.filter(function (h) { return /\/\d{6,}(?:$|[\/?#])/.test(h); }).length,
+    cards_card: cnt('[class*="card"]'),
+    cards_Card: cnt('[class*="Card"]'),
+    cards_article: cnt('article'),
+    cards_item: cnt('[class*="item"]'),
+    data_id: cnt('[data-id]'),
+    sample: sample
+  };
+}
+"""
+
+
 def search_listings(search_url, scrolls=14):
     """Собирает ID объявлений со страницы результатов поиска Суточно."""
     items = []
+    diag = {}
     error = ""
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -1691,6 +1722,12 @@ def search_listings(search_url, scrolls=14):
                 page.wait_for_timeout(500)
             except Exception:
                 pass
+            # дать SPA догрузить результаты
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            page.wait_for_timeout(3000)
 
             # прокрутка для подгрузки карточек (ленивая/бесконечная лента)
             last_count = -1
@@ -1710,6 +1747,11 @@ def search_listings(search_url, scrolls=14):
                     break
                 last_count = len(cur)
                 items = cur
+            # диагностика страницы (что реально в DOM)
+            try:
+                diag = page.evaluate(DIAG_JS)
+            except Exception as e:
+                diag = {"diag_error": repr(e)}
         except Exception as e:
             error = repr(e)
         finally:
@@ -1718,7 +1760,7 @@ def search_listings(search_url, scrolls=14):
             except Exception:
                 pass
 
-    return {"ok": len(items) > 0, "count": len(items), "items": items, "error": error}
+    return {"ok": len(items) > 0, "count": len(items), "items": items, "diag": diag, "error": error}
 
 
 @app.post("/search-listings")

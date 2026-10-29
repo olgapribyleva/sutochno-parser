@@ -43,6 +43,11 @@ def main():
     }, ensure_ascii=False, indent=2))
     print("SEARCH>>>")
 
+    # Диагностика (если нашлось 0 — по ней пойму, что на странице)
+    print("<<<DIAG")
+    print(json.dumps(res.get("diag", {}), ensure_ascii=False, indent=2))
+    print("DIAG>>>")
+
 
 if __name__ == "__main__":
     main()
