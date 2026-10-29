@@ -1714,6 +1714,40 @@ def search_listings(search_url, scrolls=14):
             )
         )
         page = context.new_page()
+
+        # перехват сетевых ответов — ищем запрос, который возвращает результаты
+        captured = []
+
+        def on_response(resp):
+            try:
+                url = resp.url
+                low = url.lower()
+                keys = ["search", "offer", "object", "result", "list", "map",
+                        "bbox", "apart", "detail", "catalog", "serp", "api"]
+                if not any(k in low for k in keys):
+                    return
+                ct = ""
+                try:
+                    ct = (resp.headers or {}).get("content-type", "")
+                except Exception:
+                    pass
+                rec = {"url": url[:180], "status": resp.status, "ct": ct[:40]}
+                if "json" in ct.lower() and resp.status == 200:
+                    try:
+                        body = resp.text()
+                        rec["len"] = len(body)
+                        ids = re.findall(r'"id"\s*:\s*"?(\d{6,8})', body)
+                        rec["id_hits"] = len(ids)
+                        rec["ids_sample"] = list(dict.fromkeys(ids))[:40]
+                        rec["head"] = body[:200]
+                    except Exception as e:
+                        rec["read_err"] = repr(e)[:80]
+                captured.append(rec)
+            except Exception:
+                pass
+
+        page.on("response", on_response)
+
         try:
             page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(8000)
@@ -1752,6 +1786,8 @@ def search_listings(search_url, scrolls=14):
                 diag = page.evaluate(DIAG_JS)
             except Exception as e:
                 diag = {"diag_error": repr(e)}
+            # добавим перехваченные сетевые ответы (что вернул поиск/API)
+            diag["responses"] = captured[:50]
         except Exception as e:
             error = repr(e)
         finally:
