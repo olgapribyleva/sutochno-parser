@@ -1,0 +1,26 @@
+name: Тест занятости
+
+on:
+workflow_dispatch: {}
+
+jobs:
+probe:
+runs-on: ubuntu-latest
+timeout-minutes: 30
+steps:
+- name: Забрать код
+uses: actions/checkout@v4
+
+- name: Установить Python
+uses: actions/setup-python@v5
+with:
+python-version: '3.12'
+
+- name: Установить зависимости
+run: pip install -r requirements.txt
+
+- name: Установить браузер Chromium
+run: python -m playwright install --with-deps chromium
+
+- name: Прочитать занятость (тест)
+run: python occupancy_probe.py
