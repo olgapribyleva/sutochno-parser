@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import re
 import time
+import json
 
 from playwright.sync_api import sync_playwright
 
@@ -1691,10 +1692,14 @@ DIAG_JS = r"""
 """
 
 
-def search_listings(search_url, scrolls=14):
-    """Собирает ID объявлений со страницы результатов поиска Суточно."""
-    items = []
-    diag = {}
+def search_listings(search_url, scrolls=6):
+    """
+    Собирает объявления из скрытого API Суточно (searchObjectsOnMap),
+    который SPA сам дёргает при загрузке страницы результатов поиска.
+    Возвращает список {id, price, salePrice, lat, lng} по всем найденным
+    объектам (до 50 на экран). Надёжнее парсинга DOM.
+    """
+    objects = {}
     error = ""
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -1715,48 +1720,30 @@ def search_listings(search_url, scrolls=14):
         )
         page = context.new_page()
 
-        # перехват ТОЛЬКО XHR/fetch — именно так SPA грузит данные результатов.
-        captured = []
-        failed = []
-
+        # Перехватываем ответ скрытого API поиска — в нём все объекты с ID и ценой.
         def on_response(resp):
             try:
-                rt = ""
-                try:
-                    rt = resp.request.resource_type
-                except Exception:
-                    pass
-                if rt not in ("xhr", "fetch"):
+                if resp.request.resource_type not in ("xhr", "fetch"):
                     return
-                ct = ""
-                try:
-                    ct = (resp.headers or {}).get("content-type", "")
-                except Exception:
-                    pass
-                rec = {"url": resp.url[:180], "status": resp.status, "ct": ct[:40]}
-                if "json" in ct.lower() and resp.status == 200:
-                    try:
-                        body = resp.text()
-                        rec["len"] = len(body)
-                        ids = re.findall(r'"id"\s*:\s*"?(\d{6,8})', body)
-                        rec["id_hits"] = len(ids)
-                        rec["ids_sample"] = list(dict.fromkeys(ids))[:40]
-                        rec["head"] = body[:160]
-                    except Exception as e:
-                        rec["read_err"] = repr(e)[:80]
-                captured.append(rec)
-            except Exception:
-                pass
-
-        def on_failed(req):
-            try:
-                if req.resource_type in ("xhr", "fetch"):
-                    failed.append({"url": req.url[:160], "rt": req.resource_type})
+                if "searchObjectsOnMap" not in resp.url or resp.status != 200:
+                    return
+                data = json.loads(resp.text())
+                objs = ((data or {}).get("data") or {}).get("objects") or []
+                for o in objs:
+                    oid = o.get("id")
+                    if oid is None:
+                        continue
+                    objects[str(oid)] = {
+                        "id": str(oid),
+                        "price": o.get("price"),
+                        "salePrice": o.get("salePrice"),
+                        "lat": o.get("lat"),
+                        "lng": o.get("lng"),
+                    }
             except Exception:
                 pass
 
         page.on("response", on_response)
-        page.on("requestfailed", on_failed)
 
         try:
             page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
@@ -1773,32 +1760,14 @@ def search_listings(search_url, scrolls=14):
                 pass
             page.wait_for_timeout(3000)
 
-            # прокрутка для подгрузки карточек (ленивая/бесконечная лента)
-            last_count = -1
-            for i in range(max(1, int(scrolls))):
+            # пара прокруток — иногда карта/результаты догружают объекты
+            for _ in range(max(1, int(scrolls))):
                 try:
-                    page.mouse.wheel(0, 4000)
+                    page.mouse.wheel(0, 3000)
                 except Exception:
                     pass
                 page.wait_for_timeout(1500)
-                try:
-                    cur = page.evaluate(SEARCH_LINKS_JS)
-                except Exception:
-                    cur = []
-                # если число найденных перестало расти 2 раза подряд — хватит
-                if len(cur) == last_count and i >= 3:
-                    items = cur
-                    break
-                last_count = len(cur)
-                items = cur
-            # диагностика страницы (что реально в DOM)
-            try:
-                diag = page.evaluate(DIAG_JS)
-            except Exception as e:
-                diag = {"diag_error": repr(e)}
-            # добавим перехваченные XHR/fetch (данные) и неудавшиеся запросы
-            diag["xhr"] = captured[:60]
-            diag["xhr_failed"] = failed[:30]
+            page.wait_for_timeout(2000)
         except Exception as e:
             error = repr(e)
         finally:
@@ -1807,7 +1776,8 @@ def search_listings(search_url, scrolls=14):
             except Exception:
                 pass
 
-    return {"ok": len(items) > 0, "count": len(items), "items": items, "diag": diag, "error": error}
+    items = sorted(objects.values(), key=lambda x: x["id"])
+    return {"ok": len(items) > 0, "count": len(items), "items": items, "error": error}
 
 
 @app.post("/search-listings")

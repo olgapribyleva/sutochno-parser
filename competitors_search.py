@@ -1,10 +1,11 @@
 """
-ПОИСК КОНКУРЕНТОВ (тест) — собирает ID объявлений со страницы результатов Суточно.
+ПОИСК КОНКУРЕНТОВ — собирает объявления со страницы результатов Суточно
+через скрытый API (searchObjectsOnMap): ID, цена, координаты.
 
-Ольга задаёт фильтры на Суточно (район, комнаты, гости), копирует ссылку
-страницы результатов и передаёт её в workflow (поле search_url). Робот
-открывает ссылку, прокручивает и выводит найденные ID компактным блоком
-<<<SEARCH ... SEARCH>>> — его легко скопировать из лога GitHub Actions.
+Ольга задаёт фильтры на Суточно, копирует ссылку результатов и передаёт её
+в workflow (поле search_url). Робот открывает ссылку, ловит ответ API и
+выводит компактный блок <<<SEARCH ... SEARCH>>> со списком ID и цен —
+его легко скопировать из лога GitHub Actions.
 
 Запуск: workflow «Поиск конкурентов (тест)» (search-test.yml) с заполненной
 ссылкой, или локально:  SEARCH_URL="https://sutochno.ru/..." python competitors_search.py
@@ -17,9 +18,6 @@ from main import search_listings
 
 SEARCH_URL = os.environ.get("SEARCH_URL", "").strip()
 
-# Сколько раз прокрутить страницу (больше — больше карточек подгрузится).
-SCROLLS = 16
-
 
 def main():
     if not SEARCH_URL:
@@ -27,10 +25,14 @@ def main():
         return
 
     print("Открываю страницу результатов:", SEARCH_URL)
-    res = search_listings(SEARCH_URL, scrolls=SCROLLS)
+    res = search_listings(SEARCH_URL)
 
     items = res.get("items", [])
-    compact = [{"id": x["id"], "text": x.get("text", "")[:160]} for x in items]
+    # компактно: id + цена (цена со скидкой, если есть)
+    rows = []
+    for x in items:
+        price = x.get("salePrice") or x.get("price")
+        rows.append({"id": x["id"], "price": price})
 
     print("РЕЗУЛЬТАТ (копируй весь блок ниже):")
     print("<<<SEARCH")
@@ -39,14 +41,9 @@ def main():
         "count": res.get("count"),
         "error": (res.get("error", "") or "")[:200],
         "ids": [x["id"] for x in items],
-        "items": compact[:120],
+        "rows": rows,
     }, ensure_ascii=False, indent=2))
     print("SEARCH>>>")
-
-    # Диагностика (если нашлось 0 — по ней пойму, что на странице)
-    print("<<<DIAG")
-    print(json.dumps(res.get("diag", {}), ensure_ascii=False, indent=2))
-    print("DIAG>>>")
 
 
 if __name__ == "__main__":
