@@ -1630,3 +1630,101 @@ def parse_sutochno(request: ParseRequest):
         "reviews": reviews,
         "results": results
     }
+
+
+# ========================= ПОИСК КОНКУРЕНТОВ ПО ССЫЛКЕ =========================
+# Ольга задаёт фильтры на Суточно (район, комнаты, гости) и копирует ссылку
+# страницы результатов. Робот открывает её, прокручивает (ленивая подгрузка
+# карточек) и собирает ID всех объявлений + краткий текст карточки.
+
+SEARCH_LINKS_JS = r"""
+() => {
+  const out = [];
+  const seen = {};
+  const anchors = Array.prototype.slice.call(document.querySelectorAll('a[href]'));
+  anchors.forEach(function (a) {
+    const href = a.href || "";
+    // ID из ссылки: .../detail/1234567  ИЛИ  .../1234567(конец|/|?)
+    let m = href.match(/\/detail\/(\d{5,})/);
+    if (!m) m = href.match(/sutochno\.ru\/[^?#]*?\/(\d{6,})(?:$|[\/?#])/);
+    if (!m) return;
+    const id = m[1];
+    if (seen[id]) return;
+    seen[id] = 1;
+    let card = a.closest('[class*="card"], [class*="Card"], article, li') || a;
+    const txt = ((card.innerText || a.innerText || "")
+      .replace(/\s+/g, " ").trim()).slice(0, 220);
+    out.push({ id: id, href: href, text: txt });
+  });
+  return out;
+}
+"""
+
+
+def search_listings(search_url, scrolls=14):
+    """Собирает ID объявлений со страницы результатов поиска Суточно."""
+    items = []
+    error = ""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
+        )
+        context = browser.new_context(
+            viewport={"width": 1366, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        )
+        page = context.new_page()
+        try:
+            page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(8000)
+            try:
+                page.locator("#modal-cookies-accept").click(timeout=2000)
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
+
+            # прокрутка для подгрузки карточек (ленивая/бесконечная лента)
+            last_count = -1
+            for i in range(max(1, int(scrolls))):
+                try:
+                    page.mouse.wheel(0, 4000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(1500)
+                try:
+                    cur = page.evaluate(SEARCH_LINKS_JS)
+                except Exception:
+                    cur = []
+                # если число найденных перестало расти 2 раза подряд — хватит
+                if len(cur) == last_count and i >= 3:
+                    items = cur
+                    break
+                last_count = len(cur)
+                items = cur
+        except Exception as e:
+            error = repr(e)
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+    return {"ok": len(items) > 0, "count": len(items), "items": items, "error": error}
+
+
+@app.post("/search-listings")
+def search_listings_endpoint(request: ParseRequest):
+    """Тестовый endpoint поиска: ID объявлений со страницы результатов."""
+    try:
+        return search_listings(request.url)
+    except Exception as e:
+        return {"ok": False, "count": 0, "items": [], "error": repr(e)}
