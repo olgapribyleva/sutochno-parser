@@ -1292,14 +1292,29 @@ CALENDAR_SNAPSHOT_JS = r"""
 
 
 def classify_cell(cls):
-    """По классам ячейки: 'off' (чужой месяц), 'free', 'busy'."""
+    """
+    По классам ячейки календаря Суточно:
+      'off'       — день чужого месяца (пропускаем);
+      'res_first' — день ЗАЕЗДА чужой брони (reserved-first-time);
+      'res_last'  — день ВЫЕЗДА чужой брони (reserved-last-time);
+      'res_mid'   — иной день внутри брони (reserved…);
+      'blocked'   — закрыт/занят без available;
+      'free'      — свободен к брони.
+    Диагностическая стадия: res_* различаем, чтобы сверить с RC, какие из них
+    реально = занятая ночь.
+    """
     c = " " + (cls or "") + " "
     if " off " in c:
         return "off"
+    if "reserved-first-time" in c:
+        return "res_first"
+    if "reserved-last-time" in c:
+        return "res_last"
+    if "reserved" in c:
+        return "res_mid"
     if " available " in c and " disabled " not in c:
         return "free"
-    # в будущем без available (и не off) = занято/заблокировано
-    return "busy"
+    return "blocked"
 
 
 def read_calendar_occupancy(url, months=3):
@@ -1444,7 +1459,7 @@ def read_calendar_occupancy(url, months=3):
     occupancy = [{"date": k, "status": v} for k, v in sorted(occ.items())]
 
     free_count = sum(1 for x in occupancy if x["status"] == "free")
-    busy_count = sum(1 for x in occupancy if x["status"] == "busy")
+    busy_count = len(occupancy) - free_count
 
     # словарь классов (по убыванию частоты) — для проверки, как помечены занятые дни
     class_hist = sorted(cls_hist.items(), key=lambda kv: kv[1], reverse=True)

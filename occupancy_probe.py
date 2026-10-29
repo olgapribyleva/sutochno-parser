@@ -16,7 +16,7 @@ from main import read_calendar_occupancy
 from update_sheet import get_competitors, normalize_sutochno_url
 
 # Сколько конкурентов проверить в тесте (не перегружаем).
-LIMIT = 4
+LIMIT = 2
 
 # Сколько месячных экранов календаря листать.
 MONTHS = 3
@@ -33,19 +33,21 @@ EXTRA_URLS = [
 
 def short(occ_result):
     """Короткая сводка результата занятости для лога."""
+    occ = occ_result.get("occupancy", [])
+    # все НЕ-свободные дни с их меткой — для сверки с RC
+    marked = [x["date"] + ":" + x["status"] for x in occ if x.get("status") != "free"]
     return {
         "ok": occ_result.get("ok"),
         "days_total": occ_result.get("days_total"),
         "free": occ_result.get("free"),
         "busy": occ_result.get("busy"),
-        "error": occ_result.get("error", ""),
-        # какой период охвачен
-        "first_day": (occ_result.get("occupancy") or [{}])[0].get("date"),
-        "last_day": (occ_result.get("occupancy") or [{}])[-1].get("date"),
-        # ГЛАВНОЕ: словарь классов дней внутри месяца (как помечены занятые)
-        "class_hist": occ_result.get("class_hist", [])[:12],
-        # примеры ЗАНЯТЫХ дней, если нашлись
-        "busy_days": [x for x in occ_result.get("occupancy", []) if x.get("status") == "busy"][:8],
+        "error": (occ_result.get("error", "") or "")[:120],
+        "period": [
+            (occ[0]["date"] if occ else None),
+            (occ[-1]["date"] if occ else None),
+        ],
+        # ГЛАВНОЕ: конкретные занятые/помеченные дни (сверяем с RC)
+        "marked_days": marked[:60],
     }
 
 
