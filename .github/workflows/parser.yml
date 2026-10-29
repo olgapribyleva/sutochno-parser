@@ -2,7 +2,7 @@ name: Парсер цен Суточно
 
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: '0 6 * * 1,4'
   workflow_dispatch: {}
 
 jobs:
