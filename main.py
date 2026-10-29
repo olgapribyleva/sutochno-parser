@@ -1311,6 +1311,7 @@ def read_calendar_occupancy(url, months=3):
     """
     today = date.today()
     occ = {}            # date -> status (free/busy), берём первое не-off значение
+    cls_hist = {}       # класс ячейки (внутри месяца) -> счётчик (диагностика)
     raw_sample = []
     error = ""
 
@@ -1355,6 +1356,22 @@ def read_calendar_occupancy(url, months=3):
                     "error": "Календарь не открылся: " + repr(e)
                 }
 
+            # ждём, пока появятся ячейки календаря; если не появились — ещё клик и ждём
+            try:
+                page.wait_for_selector(
+                    ".daterangepicker td, table.table-condensed td",
+                    timeout=8000
+                )
+            except Exception:
+                try:
+                    page.locator(".js-booking-calendar-field").first.click(timeout=5000)
+                    page.wait_for_selector(
+                        ".daterangepicker td, table.table-condensed td",
+                        timeout=8000
+                    )
+                except Exception as e2:
+                    error = "Ячейки календаря не появились: " + repr(e2)
+
             for step in range(max(1, int(months))):
                 try:
                     cells = page.evaluate(CALENDAR_SNAPSHOT_JS)
@@ -1375,6 +1392,10 @@ def read_calendar_occupancy(url, months=3):
                     status = classify_cell(c.get("cls", ""))
                     if status == "off":
                         continue
+
+                    # диагностика: какими классами помечены дни ВНУТРИ месяца
+                    cls_key = (c.get("cls", "") or "").strip()
+                    cls_hist[cls_key] = cls_hist.get(cls_key, 0) + 1
 
                     ym = parse_month_caption(c.get("cap", ""))
                     if not ym or not ym[0] or not ym[1]:
@@ -1420,12 +1441,16 @@ def read_calendar_occupancy(url, months=3):
     free_count = sum(1 for x in occupancy if x["status"] == "free")
     busy_count = sum(1 for x in occupancy if x["status"] == "busy")
 
+    # словарь классов (по убыванию частоты) — для проверки, как помечены занятые дни
+    class_hist = sorted(cls_hist.items(), key=lambda kv: kv[1], reverse=True)
+
     return {
         "ok": len(occupancy) > 0,
         "days_total": len(occupancy),
         "free": free_count,
         "busy": busy_count,
         "occupancy": occupancy,
+        "class_hist": class_hist,
         "raw_sample": raw_sample,
         "error": error
     }

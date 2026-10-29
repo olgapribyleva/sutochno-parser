@@ -15,7 +15,7 @@ from main import read_calendar_occupancy
 from update_sheet import get_competitors, normalize_sutochno_url
 
 # Сколько конкурентов проверить в тесте (не перегружаем).
-LIMIT = 2
+LIMIT = 4
 
 # Сколько месячных экранов календаря листать.
 MONTHS = 3
@@ -29,11 +29,13 @@ def short(occ_result):
         "free": occ_result.get("free"),
         "busy": occ_result.get("busy"),
         "error": occ_result.get("error", ""),
-        # первые/последние даты — чтобы увидеть, какой период охвачен
-        "first_days": [x for x in occ_result.get("occupancy", [])[:6]],
-        "last_days": [x for x in occ_result.get("occupancy", [])[-4:]],
-        # сырые ячейки — чтобы проверить, верно ли распознаём классы календаря
-        "raw_sample": occ_result.get("raw_sample", [])[:12],
+        # какой период охвачен
+        "first_day": (occ_result.get("occupancy") or [{}])[0].get("date"),
+        "last_day": (occ_result.get("occupancy") or [{}])[-1].get("date"),
+        # ГЛАВНОЕ: словарь классов дней внутри месяца (как помечены занятые)
+        "class_hist": occ_result.get("class_hist", [])[:12],
+        # примеры ЗАНЯТЫХ дней, если нашлись
+        "busy_days": [x for x in occ_result.get("occupancy", []) if x.get("status") == "busy"][:8],
     }
 
 
