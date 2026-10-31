@@ -23,12 +23,17 @@ from main import (
 )
 
 # Текущая партия на обогащение. Можно переопределить через env IDS="id1,id2".
-# 31.10 Океан 46: 21 недостающий ID из поиска (остальные 29 уже были в кэше).
+# 31.10 ОБЩИЙ прогон хвостов (скрипт тащит и "address"):
+#  Океан 46 (13 ручных) + Суханова 13 (2) + Фокина 31 (13, нужны адреса).
 DEFAULT_IDS = [
-    "1008679", "1222669", "1610637", "1685919", "1715559", "1799719",
-    "1809448", "1816279", "1844700", "1848818", "1879951", "1939496",
-    "1948928", "2073130", "2080322", "2241100", "2253264", "2310413",
-    "2340236", "854267", "929911",
+    # Океан 46 (ручные):
+    "1031413", "1874657", "1043871", "1619750", "2069422", "1844370",
+    "974779", "792937", "2060852", "2034609", "1171461", "1570811", "1293011",
+    # Суханова 13 (перенос с Фокина):
+    "1246955", "923923",
+    # Фокина 31 (адреса):
+    "1388269", "1792419", "2098192", "929527", "2021345", "2022517",
+    "1547129", "1413923", "956995", "774361", "1220955", "2078622", "2087579",
 ]
 
 IDS = [x.strip() for x in os.environ.get("IDS", "").split(",") if x.strip()] or DEFAULT_IDS
@@ -36,11 +41,28 @@ IDS = [x.strip() for x in os.environ.get("IDS", "").split(",") if x.strip()] or 
 PAUSE = 3  # пауза между объявлениями, сек
 
 
+import re as _re
+
+
+def extract_address(page_title):
+    """Адрес из заголовка вкладки Суточно:
+    '...посуточно, Владивосток, <Улица, дом>, объявление <id> — Суточно.ру'
+    -> '<Улица, дом>'."""
+    pt = " ".join((page_title or "").split())
+    m = _re.search(r"Владивосток,\s*(.*?),\s*объявление", pt)
+    if m:
+        return m.group(1).strip()
+    # запасной вариант: до ' — Суточно'
+    m = _re.search(r"Владивосток,\s*(.*?)\s*[—-]\s*Суточно", pt)
+    return m.group(1).strip() if m else ""
+
+
 def enrich_one(oid):
     url = "https://sutochno.ru/front/searchapp/detail/" + oid
     data = open_page_and_get_data(url)
     body = data.get("body_text", "") or ""
-    title = (data.get("title") or data.get("page_title") or "").strip()
+    page_title = data.get("page_title", "") or ""
+    title = (data.get("title") or page_title or "").strip()
     # title со страницы иногда = служебный заголовок вкладки; чистим переносы
     title = " ".join(title.split())
     try:
@@ -51,6 +73,7 @@ def enrich_one(oid):
         "id": oid,
         "url": url,
         "title": title[:120],
+        "address": extract_address(page_title),
         "rooms": extract_rooms(body),
         "guests": extract_guests(body),
         "area": extract_area(body),
