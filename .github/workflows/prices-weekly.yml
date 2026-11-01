@@ -22,6 +22,7 @@ jobs:
           - neibuta34
           - neibuta2a
           - ocean46
+          - fokina31
     steps:
       - name: Забрать код
         uses: actions/checkout@v4
