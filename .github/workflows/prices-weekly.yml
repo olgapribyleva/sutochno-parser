@@ -1,0 +1,69 @@
+name: Цены конкурентов — авто (пн и чт)
+
+# Полный автомат: 2 раза в неделю считает цены конкурентов по всем квартирам
+# и обновляет рекомендации в книге «Отбор конкурентов по квартирам».
+on:
+  schedule:
+    - cron: '0 7 * * 1,4'   # пн и чт 07:00 UTC = 17:00 Владивосток
+  workflow_dispatch: {}
+
+jobs:
+  prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        apartment:
+          - pologaya62
+          - sukhanova13
+          - russkaya51v
+          - neibuta34
+          - neibuta2a
+          - ocean46
+    steps:
+      - name: Забрать код
+        uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+
+      - name: Установить браузер Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Парсить цены квартиры
+        env:
+          APARTMENT: ${{ matrix.apartment }}
+          PRICES_WEB_APP_URL: ${{ secrets.PRICES_WEB_APP_URL }}
+          PRICES_TOKEN: ${{ secrets.PRICES_TOKEN }}
+        run: python prices_run.py
+
+  recommend:
+    needs: prices
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Забрать код
+        uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Установить зависимости
+        run: pip install requests
+
+      - name: Пересчитать рекомендации
+        env:
+          ACTION: recommend
+          PRICES_WEB_APP_URL: ${{ secrets.PRICES_WEB_APP_URL }}
+          PRICES_TOKEN: ${{ secrets.PRICES_TOKEN }}
+        run: python prices_run.py
