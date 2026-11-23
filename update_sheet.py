@@ -1,3 +1,4 @@
+import os
 import time
 import requests
 import re
@@ -14,8 +15,8 @@ from main import (
     calculate_price_by_calendar,
 )
 
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyoOBbl3lKlM2j2ih_5fnsiqJcK5P9KTpmjoJQ59cv5hZB0sxv962yqUvr6Gy1W0nMW/exec"
-TOKEN = "sutochno_secret_123"
+WEB_APP_URL = os.environ.get("PRICES_WEB_APP_URL", "")
+TOKEN = os.environ.get("PRICES_TOKEN", "")
 
 GUESTS = 4
 NIGHTS = 2
