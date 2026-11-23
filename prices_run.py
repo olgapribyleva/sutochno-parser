@@ -29,7 +29,7 @@ import requests
 # Web App таблицы «Отбор конкурентов по квартирам» (НОВЫЙ, боундед к этой книге).
 # ⚠️ ПОДСТАВИТЬ после деплоя скрипта Ольгой (New deployment → Web app → /exec).
 WEB_APP_URL = os.environ.get("PRICES_WEB_APP_URL", "PASTE_PRICES_WEB_APP_URL_HERE")
-TOKEN = os.environ.get("PRICES_TOKEN", "sutochno_prices_123")
+TOKEN = os.environ.get("PRICES_TOKEN", "")
 
 # Как на Фокина 31.
 OFFSETS = [7, 14, 30]
